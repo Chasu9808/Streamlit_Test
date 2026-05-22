@@ -1,5 +1,10 @@
+# page1.py
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+
+from dashboard_utils import render_marketing_insight
+
 
 @st.cache_data
 def load_marketing():
@@ -12,13 +17,16 @@ def load_marketing():
     df['Date'] = pd.to_datetime(df['Date'])
     return df
 
+
 df = load_marketing().copy()
+
 st.title("📣 마케팅 캠페인 대시보드")
 st.write(f"전체 데이터: {len(df):,}행")
 
 
 with st.sidebar:
     st.header("필터")
+
     if st.button("필터 초기화"):
         st.session_state['campaign_types'] = df['Campaign_Type'].unique().tolist()
         st.session_state['location'] = "전체"
@@ -29,29 +37,36 @@ with st.sidebar:
         default=st.session_state.get('campaign_types', df['Campaign_Type'].unique().tolist()),
         key='campaign_types'
     )
+
     location = st.selectbox(
         "지역",
         ["전체"] + sorted(df['Location'].unique().tolist()),
         key='location'
     )
 
+
 filtered = df[df['Campaign_Type'].isin(campaign_types)]
+
 if location != "전체":
     filtered = filtered[filtered['Location'] == location]
 
+
 col1, col2, col3 = st.columns(3)
+
 col1.metric("총 캠페인 수", f"{len(filtered):,}")
 col2.metric("평균 ROI", f"{filtered['ROI'].mean():.2f}")
 col3.metric("평균 전환율", f"{filtered['Conversion_Rate'].mean():.1%}")
 
-import plotly.express as px
 
 fig = px.bar(
     filtered.groupby('Campaign_Type')['ROI'].mean().reset_index(),
-    x='Campaign_Type', y='ROI',
+    x='Campaign_Type',
+    y='ROI',
     title='캠페인 유형별 평균 ROI'
 )
-st.plotly_chart(fig)
+
+st.plotly_chart(fig, use_container_width=True)
+
 
 # =========================
 # 추가 분석 영역
@@ -70,6 +85,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ]
 )
 
+
 # =========================
 # TAB 1. 데이터 미리보기
 # =========================
@@ -78,15 +94,16 @@ with tab1:
     st.dataframe(filtered.head(30), use_container_width=True)
 
     st.write("필터 적용 후 데이터 크기")
-    col1, col2, col3 = st.columns(3)
 
-    with col1:
+    sub_col1, sub_col2, sub_col3 = st.columns(3)
+
+    with sub_col1:
         st.metric("행 개수", f"{len(filtered):,}")
 
-    with col2:
+    with sub_col2:
         st.metric("컬럼 개수", f"{len(filtered.columns):,}")
 
-    with col3:
+    with sub_col3:
         st.metric("결측치 개수", f"{filtered.isnull().sum().sum():,}")
 
     st.write("기초 통계")
@@ -225,3 +242,16 @@ with tab5:
     st.write("다운로드 대상 데이터 미리보기")
     st.dataframe(filtered.head(20), use_container_width=True)
 
+
+# =========================
+# 선택형 자동 인사이트
+# =========================
+
+st.divider()
+
+show_marketing_insight = st.checkbox("마케팅 자동 인사이트 보기")
+
+if show_marketing_insight:
+    render_marketing_insight(filtered)
+else:
+    st.info("자동 인사이트는 체크박스를 선택했을 때만 표시됩니다.")

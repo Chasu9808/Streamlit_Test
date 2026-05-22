@@ -1,5 +1,10 @@
+# page2.py
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+
+from dashboard_utils import render_ecommerce_insight
+
 
 @st.cache_data
 def load_ecommerce():
@@ -7,11 +12,15 @@ def load_ecommerce():
     df['City'] = df['City'].str.strip()
     return df
 
+
 df = load_ecommerce().copy()
+
 st.title("🛒 이커머스 매출 대시보드")
+
 
 with st.sidebar:
     st.header("필터")
+
     if st.button("필터 초기화"):
         st.session_state['categories'] = df['Product Category'].unique().tolist()
         st.session_state['month_range'] = (1, 12)
@@ -22,24 +31,37 @@ with st.sidebar:
         default=st.session_state.get('categories', df['Product Category'].unique().tolist()),
         key='categories'
     )
-    month_range = st.slider("월 범위", 1, 12, (1, 12), key='month_range')
+
+    month_range = st.slider(
+        "월 범위",
+        1,
+        12,
+        (1, 12),
+        key='month_range'
+    )
+
 
 filtered = df[
     df['Product Category'].isin(categories) &
     df['Month'].between(month_range[0], month_range[1])
 ]
 
+
 col1, col2 = st.columns(2)
+
 col1.metric("총 주문 수", f"{len(filtered):,}")
 col2.metric("총 매출", f"${filtered['Sales'].sum():,.0f}")
 
-import plotly.express as px
+
 fig = px.bar(
     filtered.groupby('Product Category')['Sales'].sum().reset_index(),
-    x='Product Category', y='Sales',
+    x='Product Category',
+    y='Sales',
     title='카테고리별 총 매출'
 )
-st.plotly_chart(fig)
+
+st.plotly_chart(fig, use_container_width=True)
+
 
 # =========================
 # 추가 분석 영역
@@ -58,6 +80,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ]
 )
 
+
 # =========================
 # TAB 1. 데이터 미리보기
 # =========================
@@ -66,15 +89,16 @@ with tab1:
     st.dataframe(filtered.head(30), use_container_width=True)
 
     st.write("필터 적용 후 데이터 크기")
-    col1, col2, col3 = st.columns(3)
 
-    with col1:
+    sub_col1, sub_col2, sub_col3 = st.columns(3)
+
+    with sub_col1:
         st.metric("행 개수", f"{len(filtered):,}")
 
-    with col2:
+    with sub_col2:
         st.metric("컬럼 개수", f"{len(filtered.columns):,}")
 
-    with col3:
+    with sub_col3:
         st.metric("결측치 개수", f"{filtered.isnull().sum().sum():,}")
 
     st.write("기초 통계")
@@ -169,7 +193,6 @@ with tab3:
 with tab4:
     st.write("성별, 결제 방식, 배송 방식 등 고객/주문 특성을 확인합니다.")
 
-    # 성별 분석
     if "Gender" in filtered.columns:
         gender_summary = (
             filtered
@@ -194,7 +217,6 @@ with tab4:
 
         st.plotly_chart(fig_gender, use_container_width=True)
 
-    # 결제 방식 분석
     if "Payment Method" in filtered.columns:
         payment_summary = (
             filtered
@@ -221,7 +243,6 @@ with tab4:
 
         st.plotly_chart(fig_payment, use_container_width=True)
 
-    # 배송 방식 분석
     if "Shipping Type" in filtered.columns:
         shipping_summary = (
             filtered
@@ -273,3 +294,17 @@ with tab5:
 
     st.write("다운로드 대상 데이터 미리보기")
     st.dataframe(filtered.head(20), use_container_width=True)
+
+
+# =========================
+# 선택형 자동 인사이트
+# =========================
+
+st.divider()
+
+show_ecommerce_insight = st.checkbox("이커머스 자동 인사이트 보기")
+
+if show_ecommerce_insight:
+    render_ecommerce_insight(filtered)
+else:
+    st.info("자동 인사이트는 체크박스를 선택했을 때만 표시됩니다.")

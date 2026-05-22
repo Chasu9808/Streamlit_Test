@@ -1,10 +1,15 @@
 # dashboard_utils.py
 import io
+import html
 
 import streamlit as st
 import pandas as pd
 from pandas.errors import EmptyDataError
 
+
+# =========================================================
+# CSV 읽기 / 다운로드 공통 함수
+# =========================================================
 
 @st.cache_data
 def read_csv_from_path(file_path):
@@ -45,21 +50,32 @@ def convert_df_to_csv_bytes(df):
     return df.to_csv(index=False).encode("utf-8-sig")
 
 
+# =========================================================
+# page3 등에서 사용할 공통 분석 대시보드
+# =========================================================
+
 def render_analysis_dashboard(df, title="데이터 분석 대시보드"):
     """
     공통 분석 대시보드 함수.
-    마케팅, 이커머스, 새 데이터 분석 페이지에서 모두 사용한다.
+    새 데이터 업로드 페이지 등에서 사용한다.
+
+    흐름:
+    1. 원본 데이터 미리보기
+    2. 분석 컬럼 선택
+    3. 조건 필터
+    4. 분석 실행 버튼
+    5. 탭별 분석
     """
 
     st.title(title)
 
     if df is None:
         st.warning("분석할 데이터가 없습니다.")
-        return
+        return None
 
     if df.empty:
         st.warning("데이터가 비어 있습니다.")
-        return
+        return None
 
     st.success("데이터 로드 완료")
     st.write(f"전체 데이터 크기: {len(df):,}행 / {len(df.columns):,}개 컬럼")
@@ -81,12 +97,13 @@ def render_analysis_dashboard(df, title="데이터 분석 대시보드"):
     selected_columns = st.multiselect(
         "분석에 사용할 컬럼을 선택하세요",
         options=df.columns.tolist(),
-        default=df.columns.tolist()[:5]
+        default=df.columns.tolist()[:5],
+        key=f"{title}_selected_columns"
     )
 
     if len(selected_columns) == 0:
         st.warning("분석할 컬럼을 최소 1개 이상 선택해주세요.")
-        return
+        return None
 
     selected_df = df[selected_columns].copy()
 
@@ -101,7 +118,8 @@ def render_analysis_dashboard(df, title="데이터 분석 대시보드"):
 
     filter_columns = st.multiselect(
         "필터를 적용할 컬럼을 선택하세요",
-        options=selected_df.columns.tolist()
+        options=selected_df.columns.tolist(),
+        key=f"{title}_filter_columns"
     )
 
     if len(filter_columns) > 0:
@@ -112,7 +130,7 @@ def render_analysis_dashboard(df, title="데이터 분석 대시보드"):
             selected_values = st.multiselect(
                 f"{filter_col} 컬럼에서 포함할 값을 선택하세요. 최대 50개 값만 표시됩니다.",
                 options=unique_values,
-                key=f"{title}_{filter_col}"
+                key=f"{title}_{filter_col}_filter_values"
             )
 
             if len(selected_values) > 0:
@@ -127,11 +145,11 @@ def render_analysis_dashboard(df, title="데이터 분석 대시보드"):
 
     if not run_analysis:
         st.info("분석을 시작하려면 '분석 실행' 버튼을 눌러주세요.")
-        return
+        return filtered_df
 
     if len(filtered_df) == 0:
         st.warning("필터 적용 후 남은 데이터가 없습니다.")
-        return
+        return filtered_df
 
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
         [
@@ -363,3 +381,581 @@ def render_analysis_dashboard(df, title="데이터 분석 대시보드"):
                     mime="text/csv",
                     key=f"{title}_download_search"
                 )
+
+    return filtered_df
+
+
+# =========================================================
+# 자동 인사이트 카드 출력 함수
+# =========================================================
+
+def render_insight_card(title, summary_text, insight_items):
+    """
+    HTML을 사용하지 않고 Streamlit 기본 컴포넌트만으로
+    하나의 박스 안에 자동 인사이트를 정리해서 보여주는 함수.
+
+    HTML 태그가 화면에 그대로 출력되는 문제를 피하기 위해
+    st.markdown(unsafe_allow_html=True)를 사용하지 않는다.
+    """
+
+    badge_map = {
+        "good": {
+            "icon": "✅",
+            "text": "양호"
+        },
+        "warning": {
+            "icon": "⚠️",
+            "text": "확인"
+        },
+        "danger": {
+            "icon": "🚨",
+            "text": "주의"
+        },
+        "normal": {
+            "icon": "ℹ️",
+            "text": "요약"
+        }
+    }
+
+    with st.container(border=True):
+        st.markdown(f"### {title}")
+        st.caption(summary_text)
+
+        st.divider()
+
+        for index, item in enumerate(insight_items):
+            label = item.get("label", "")
+            message = item.get("message", "")
+            level = item.get("level", "normal")
+
+            badge_info = badge_map.get(level, badge_map["normal"])
+
+            badge_col, content_col = st.columns([1.2, 8.8])
+
+            with badge_col:
+                st.markdown(
+                    f"**{badge_info['icon']} {badge_info['text']}**"
+                )
+
+            with content_col:
+                st.markdown(f"**{label}**")
+                st.write(message)
+
+            if index < len(insight_items) - 1:
+                st.divider()
+
+
+# =========================================================
+# 자동 인사이트 공통 내용 생성 함수
+# =========================================================
+
+def build_basic_insight_items(df):
+    """
+    마케팅/이커머스에서 공통으로 사용할 수 있는
+    데이터 규모, 결측치, 중복 데이터 인사이트를 만든다.
+
+    이 함수는 화면에 직접 출력하지 않고,
+    render_insight_card()에 전달할 리스트만 반환한다.
+    """
+
+    insight_items = []
+
+    if df is None or df.empty:
+        insight_items.append({
+            "label": "데이터 상태",
+            "message": "현재 필터 기준으로 해석할 데이터가 없습니다.",
+            "level": "warning"
+        })
+        return insight_items
+
+    row_count = len(df)
+    col_count = len(df.columns)
+
+    missing_count = df.isnull().sum().sum()
+    duplicate_count = df.duplicated().sum()
+
+    numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
+    object_cols = df.select_dtypes(include=["object"]).columns.tolist()
+
+    insight_items.append({
+        "label": "데이터 규모",
+        "message": (
+            f"현재 필터 기준 데이터는 총 {row_count:,}행, {col_count:,}개 컬럼으로 구성되어 있습니다. "
+            f"숫자형 컬럼은 {len(numeric_cols):,}개, 문자형 컬럼은 {len(object_cols):,}개입니다."
+        ),
+        "level": "normal"
+    })
+
+    if missing_count > 0:
+        insight_items.append({
+            "label": "결측치 확인 필요",
+            "message": (
+                f"결측치가 총 {missing_count:,}개 발견되었습니다. "
+                "결측치가 많은 컬럼은 평균, 합계, 비율 계산 결과에 영향을 줄 수 있습니다."
+            ),
+            "level": "warning"
+        })
+    else:
+        insight_items.append({
+            "label": "결측치 상태",
+            "message": "현재 필터 기준 데이터에는 결측치가 없습니다.",
+            "level": "good"
+        })
+
+    if duplicate_count > 0:
+        insight_items.append({
+            "label": "중복 데이터 확인 필요",
+            "message": (
+                f"중복 행이 {duplicate_count:,}개 발견되었습니다. "
+                "동일한 거래 또는 캠페인이 반복 기록된 것인지 확인하는 것이 좋습니다."
+            ),
+            "level": "warning"
+        })
+    else:
+        insight_items.append({
+            "label": "중복 데이터 상태",
+            "message": "현재 필터 기준 데이터에는 중복 행이 없습니다.",
+            "level": "good"
+        })
+
+    return insight_items
+
+
+# =========================================================
+# 마케팅 자동 인사이트
+# =========================================================
+
+def render_marketing_insight(filtered):
+    """
+    마케팅 데이터 전용 자동 인사이트.
+
+    필요한 주요 컬럼:
+        Campaign_Type
+        Channel_Used
+        ROI
+        Conversion_Rate
+        Acquisition_Cost
+    """
+
+    if filtered is None or filtered.empty:
+        render_insight_card(
+            title="🤖 마케팅 자동 인사이트",
+            summary_text="현재 필터 기준으로 해석할 마케팅 데이터가 없습니다.",
+            insight_items=[
+                {
+                    "label": "데이터 없음",
+                    "message": "필터 조건을 조정하거나 전체 데이터를 다시 확인해주세요.",
+                    "level": "warning"
+                }
+            ]
+        )
+        return
+
+    insight_items = build_basic_insight_items(filtered)
+
+    required_cols = [
+        "Campaign_Type",
+        "Channel_Used",
+        "ROI",
+        "Conversion_Rate",
+        "Acquisition_Cost"
+    ]
+
+    missing_cols = [
+        col for col in required_cols
+        if col not in filtered.columns
+    ]
+
+    if len(missing_cols) > 0:
+        insight_items.append({
+            "label": "필수 컬럼 부족",
+            "message": f"마케팅 자동 해석에 필요한 컬럼이 부족합니다: {missing_cols}",
+            "level": "danger"
+        })
+
+        render_insight_card(
+            title="🤖 마케팅 자동 인사이트",
+            summary_text="마케팅 데이터 구조를 기준으로 자동 해석을 시도했지만, 일부 필수 컬럼이 부족합니다.",
+            insight_items=insight_items
+        )
+        return
+
+    # =========================
+    # 캠페인 유형별 ROI
+    # =========================
+    campaign_roi = (
+        filtered
+        .groupby("Campaign_Type")["ROI"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+
+    if not campaign_roi.empty:
+        best_campaign_type = campaign_roi.index[0]
+        best_campaign_roi = campaign_roi.iloc[0]
+
+        worst_campaign_type = campaign_roi.index[-1]
+        worst_campaign_roi = campaign_roi.iloc[-1]
+
+        insight_items.append({
+            "label": "ROI 우수 캠페인 유형",
+            "message": (
+                f"평균 ROI가 가장 높은 캠페인 유형은 '{best_campaign_type}'이며, "
+                f"평균 ROI는 {best_campaign_roi:.2f}입니다."
+            ),
+            "level": "good"
+        })
+
+        insight_items.append({
+            "label": "ROI 낮은 캠페인 유형",
+            "message": (
+                f"평균 ROI가 가장 낮은 캠페인 유형은 '{worst_campaign_type}'이며, "
+                f"평균 ROI는 {worst_campaign_roi:.2f}입니다."
+            ),
+            "level": "warning"
+        })
+
+    # =========================
+    # 채널별 전환율
+    # =========================
+    channel_conversion = (
+        filtered
+        .groupby("Channel_Used")["Conversion_Rate"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+
+    if not channel_conversion.empty:
+        best_channel = channel_conversion.index[0]
+        best_conversion = channel_conversion.iloc[0]
+
+        insight_items.append({
+            "label": "전환율 우수 채널",
+            "message": (
+                f"평균 전환율이 가장 높은 채널은 '{best_channel}'이며, "
+                f"평균 전환율은 {best_conversion:.2%}입니다."
+            ),
+            "level": "normal"
+        })
+
+    # =========================
+    # 채널별 획득 비용
+    # =========================
+    cost_by_channel = (
+        filtered
+        .groupby("Channel_Used")["Acquisition_Cost"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+
+    if not cost_by_channel.empty:
+        high_cost_channel = cost_by_channel.index[0]
+        high_cost_value = cost_by_channel.iloc[0]
+
+        low_cost_channel = cost_by_channel.index[-1]
+        low_cost_value = cost_by_channel.iloc[-1]
+
+        insight_items.append({
+            "label": "획득 비용 비교",
+            "message": (
+                f"평균 획득 비용이 가장 높은 채널은 '{high_cost_channel}'이며 평균 비용은 ${high_cost_value:,.0f}입니다. "
+                f"가장 낮은 채널은 '{low_cost_channel}'이며 평균 비용은 ${low_cost_value:,.0f}입니다."
+            ),
+            "level": "normal"
+        })
+
+    # =========================
+    # ROI 이상치 후보
+    # =========================
+    q1 = filtered["ROI"].quantile(0.25)
+    q3 = filtered["ROI"].quantile(0.75)
+    iqr = q3 - q1
+    upper_bound = q3 + 1.5 * iqr
+
+    outlier_df = filtered[filtered["ROI"] > upper_bound]
+
+    if outlier_df.empty:
+        insight_items.append({
+            "label": "ROI 이상치",
+            "message": "현재 필터 기준으로 ROI가 일반 범위보다 과도하게 높은 이상치 후보는 발견되지 않았습니다.",
+            "level": "good"
+        })
+    else:
+        insight_items.append({
+            "label": "ROI 이상치 후보",
+            "message": (
+                f"ROI가 일반 범위보다 높은 캠페인이 {len(outlier_df):,}건 발견되었습니다. "
+                "성과가 매우 좋은 캠페인인지, 데이터 입력 오류인지 확인해볼 수 있습니다."
+            ),
+            "level": "warning"
+        })
+
+    # =========================
+    # 하나의 카드로 출력
+    # =========================
+    render_insight_card(
+        title="🤖 마케팅 자동 인사이트",
+        summary_text="현재 적용된 필터 조건을 기준으로 캠페인 성과, 전환율, 획득 비용, 데이터 품질을 요약했습니다.",
+        insight_items=insight_items
+    )
+
+    # 상세 데이터는 기본 노출하지 않고 접어두기
+    with st.expander("ROI 상위 캠페인 TOP 5 보기"):
+        display_cols = [
+            col for col in [
+                "Campaign_ID",
+                "Company",
+                "Campaign_Type",
+                "Channel_Used",
+                "Location",
+                "ROI",
+                "Conversion_Rate",
+                "Acquisition_Cost"
+            ]
+            if col in filtered.columns
+        ]
+
+        top_roi_df = (
+            filtered
+            .sort_values("ROI", ascending=False)
+            .head(5)
+        )
+
+        st.dataframe(
+            top_roi_df[display_cols],
+            use_container_width=True
+        )
+
+
+# =========================================================
+# 이커머스 자동 인사이트
+# =========================================================
+
+def render_ecommerce_insight(filtered):
+    """
+    이커머스 데이터 전용 자동 인사이트.
+
+    필요한 주요 컬럼:
+        Product Category
+        City
+        Month
+        Sales
+    """
+
+    if filtered is None or filtered.empty:
+        render_insight_card(
+            title="🤖 이커머스 자동 인사이트",
+            summary_text="현재 필터 기준으로 해석할 이커머스 데이터가 없습니다.",
+            insight_items=[
+                {
+                    "label": "데이터 없음",
+                    "message": "필터 조건을 조정하거나 전체 데이터를 다시 확인해주세요.",
+                    "level": "warning"
+                }
+            ]
+        )
+        return
+
+    insight_items = build_basic_insight_items(filtered)
+
+    required_cols = [
+        "Product Category",
+        "City",
+        "Month",
+        "Sales"
+    ]
+
+    missing_cols = [
+        col for col in required_cols
+        if col not in filtered.columns
+    ]
+
+    if len(missing_cols) > 0:
+        insight_items.append({
+            "label": "필수 컬럼 부족",
+            "message": f"이커머스 자동 해석에 필요한 컬럼이 부족합니다: {missing_cols}",
+            "level": "danger"
+        })
+
+        render_insight_card(
+            title="🤖 이커머스 자동 인사이트",
+            summary_text="이커머스 데이터 구조를 기준으로 자동 해석을 시도했지만, 일부 필수 컬럼이 부족합니다.",
+            insight_items=insight_items
+        )
+        return
+
+    # =========================
+    # 카테고리별 매출
+    # =========================
+    category_sales = (
+        filtered
+        .groupby("Product Category")["Sales"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+
+    if not category_sales.empty:
+        top_category = category_sales.index[0]
+        top_category_sales = category_sales.iloc[0]
+
+        bottom_category = category_sales.index[-1]
+        bottom_category_sales = category_sales.iloc[-1]
+
+        total_sales = filtered["Sales"].sum()
+        top_category_ratio = top_category_sales / total_sales if total_sales != 0 else 0
+
+        insight_items.append({
+            "label": "매출 상위 카테고리",
+            "message": (
+                f"현재 필터 기준 매출이 가장 높은 카테고리는 '{top_category}'이며, "
+                f"총 매출은 ${top_category_sales:,.0f}입니다. "
+                f"전체 매출의 {top_category_ratio:.1%}를 차지합니다."
+            ),
+            "level": "good"
+        })
+
+        insight_items.append({
+            "label": "매출 하위 카테고리",
+            "message": (
+                f"매출이 가장 낮은 카테고리는 '{bottom_category}'이며, "
+                f"총 매출은 ${bottom_category_sales:,.0f}입니다."
+            ),
+            "level": "warning"
+        })
+
+    # =========================
+    # 도시별 매출
+    # =========================
+    city_sales = (
+        filtered
+        .groupby("City")["Sales"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+
+    if not city_sales.empty:
+        top_city = city_sales.index[0]
+        top_city_sales = city_sales.iloc[0]
+
+        insight_items.append({
+            "label": "매출 상위 도시",
+            "message": (
+                f"도시 기준으로는 '{top_city}'의 매출이 가장 높으며, "
+                f"총 매출은 ${top_city_sales:,.0f}입니다."
+            ),
+            "level": "normal"
+        })
+
+    # =========================
+    # 월별 매출
+    # =========================
+    monthly_sales = (
+        filtered
+        .groupby("Month")["Sales"]
+        .sum()
+        .sort_index()
+    )
+
+    if not monthly_sales.empty:
+        best_month = monthly_sales.idxmax()
+        best_month_sales = monthly_sales.max()
+
+        insight_items.append({
+            "label": "월별 최고 매출",
+            "message": (
+                f"월별 기준으로는 {best_month}월의 매출이 가장 높으며, "
+                f"총 매출은 ${best_month_sales:,.0f}입니다."
+            ),
+            "level": "normal"
+        })
+
+        if len(monthly_sales) >= 2:
+            first_month_sales = monthly_sales.iloc[0]
+            last_month_sales = monthly_sales.iloc[-1]
+
+            if first_month_sales != 0:
+                growth_rate = (last_month_sales - first_month_sales) / first_month_sales
+
+                if growth_rate > 0:
+                    insight_items.append({
+                        "label": "월 범위 매출 변화",
+                        "message": (
+                            f"선택된 월 범위에서 마지막 월 매출은 첫 월 대비 {growth_rate:.1%} 증가했습니다."
+                        ),
+                        "level": "good"
+                    })
+                elif growth_rate < 0:
+                    insight_items.append({
+                        "label": "월 범위 매출 변화",
+                        "message": (
+                            f"선택된 월 범위에서 마지막 월 매출은 첫 월 대비 {abs(growth_rate):.1%} 감소했습니다."
+                        ),
+                        "level": "warning"
+                    })
+                else:
+                    insight_items.append({
+                        "label": "월 범위 매출 변화",
+                        "message": "선택된 월 범위에서 첫 월과 마지막 월의 매출은 동일합니다.",
+                        "level": "normal"
+                    })
+
+    # =========================
+    # 매출 이상치 후보
+    # =========================
+    q1 = filtered["Sales"].quantile(0.25)
+    q3 = filtered["Sales"].quantile(0.75)
+    iqr = q3 - q1
+    upper_bound = q3 + 1.5 * iqr
+
+    outlier_df = filtered[filtered["Sales"] > upper_bound]
+
+    if outlier_df.empty:
+        insight_items.append({
+            "label": "매출 이상치",
+            "message": "현재 필터 기준으로 매출이 일반 범위보다 과도하게 높은 이상치 후보는 발견되지 않았습니다.",
+            "level": "good"
+        })
+    else:
+        insight_items.append({
+            "label": "매출 이상치 후보",
+            "message": (
+                f"일반 범위보다 매출이 높은 주문이 {len(outlier_df):,}건 발견되었습니다. "
+                "대량 구매, 특수 주문, 데이터 입력 오류 여부를 확인해볼 수 있습니다."
+            ),
+            "level": "warning"
+        })
+
+    # =========================
+    # 하나의 카드로 출력
+    # =========================
+    render_insight_card(
+        title="🤖 이커머스 자동 인사이트",
+        summary_text="현재 적용된 필터 조건을 기준으로 매출, 카테고리, 도시, 월별 흐름, 데이터 품질을 요약했습니다.",
+        insight_items=insight_items
+    )
+
+    # 상세 데이터는 기본 노출하지 않고 접어두기
+    with st.expander("매출 상위 주문 TOP 5 보기"):
+        display_cols = [
+            col for col in [
+                "Product Category",
+                "City",
+                "Month",
+                "Sales",
+                "Gender",
+                "Payment Method",
+                "Shipping Type"
+            ]
+            if col in filtered.columns
+        ]
+
+        top_sales_df = (
+            filtered
+            .sort_values("Sales", ascending=False)
+            .head(5)
+        )
+
+        st.dataframe(
+            top_sales_df[display_cols],
+            use_container_width=True
+        )
